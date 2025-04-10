@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import torch
@@ -85,6 +86,20 @@ def run_parse_mmlu_response(
         str (one of "A", "B", "C", or "D") if the model output can be parsed into a prediction,
         else None.
     """
+    pattern = r"[Tt]he\s+correct\s+answer\s+is\s*([ABCD])\b"
+    match = re.search(pattern, model_output)
+    if match:
+        return match.group(1).upper()
+
+    stripped = model_output.strip().upper()
+    if stripped in {"A", "B", "C", "D"}:
+        return stripped
+
+    match = re.search(r'\b([ABCD])\b', model_output, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+
+    return None
     raise NotImplementedError
 
 
