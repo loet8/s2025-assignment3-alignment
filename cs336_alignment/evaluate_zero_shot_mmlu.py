@@ -1,17 +1,14 @@
-from tests import adapters
+import os
 import csv
 import json
-import os
+import torch
 from typing import Any, List, Dict
 from vllm import LLM, SamplingParams
+from tests import adapters
 
-
-
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 def format_prompt(example: Dict[str, Any]) -> str:
-    """
-    Formats an MMLU example into a prompt string.
-    """
     prompt = (
         f"Answer the following multiple choice question about {example['subject']}. "
         f"Respond with a single sentence of the form \"The correct answer is _\", "
@@ -26,25 +23,12 @@ def format_prompt(example: Dict[str, Any]) -> str:
     return prompt
 
 def load_mmlu_csv(csv_path: str, subject: str) -> List[Dict[str, Any]]:
-    """
-    Loads a CSV file containing MMLU examples from a file with no header.
-    The CSV is assumed to have the following columns in order:
-      Column 0: Question text
-      Column 1: Option A
-      Column 2: Option B
-      Column 3: Option C
-      Column 4: Option D
-      Column 5: Correct answer (e.g., A, B, C, or D)
-    
-    Returns:
-      A list of dictionaries, each with keys: "subject", "question", "options", "answer"
-    """
     examples = []
     with open(csv_path, mode="r", encoding="utf-8") as f:
         reader = csv.reader(f)
         for row in reader:
             if not row or len(row) < 6:
-                continue  
+                continue
             example = {
                 "subject": subject,
                 "question": row[0],
@@ -55,11 +39,6 @@ def load_mmlu_csv(csv_path: str, subject: str) -> List[Dict[str, Any]]:
     return examples
 
 def load_all_examples(base_dir: str) -> List[Dict[str, Any]]:
-    """
-    Loads all CSV files from the given base directory (e.g., the 'dev' split)
-    and aggregates MMLU examples. Assumes that each file's name contains
-    the subject; for example "anatomy_dev.csv" will produce subject "anatomy".
-    """
     examples = []
     for file in os.listdir(base_dir):
         if file.endswith(".csv"):
@@ -71,24 +50,26 @@ def load_all_examples(base_dir: str) -> List[Dict[str, Any]]:
     return examples
 
 def main():
-    
     mmlu_base_dir = "/Users/tiffanyloe/Desktop/ECE 491B/Assignment 3/s2025-assignment3-alignment/data/mmlu/dev"
     examples = load_all_examples(mmlu_base_dir)
     print(f"Loaded {len(examples)} MMLU examples.")
-
     prompts = [format_prompt(example) for example in examples]
-
-    model_path = "../Qwen/Qwen2.5-0.5B"  
+    model_path = "../Qwen/Qwen2.5-0.5B"
     sampling_params = SamplingParams(
         temperature=0.0,
         top_p=1.0,
-        max_tokens=1024,
+        max_tokens=512,
         stop=["\n"]
     )
     llm = LLM(model=model_path)
-
-    outputs = llm.generate(prompts, sampling_params)
-
+    batch_size = 5
+    outputs = []
+    for i in range(0, len(prompts), batch_size):
+        batch_prompts = prompts[i:i+batch_size]
+        print(f"Processing batch {i // batch_size + 1} / {((len(prompts)-1) // batch_size) + 1}")
+        batch_outputs = llm.generate(batch_prompts, sampling_params)
+        outputs.extend(batch_outputs)
+        torch.cuda.empty_cache()
     num_correct = 0
     results = []
     for example, prompt, output in zip(examples, prompts, outputs):
@@ -98,7 +79,6 @@ def main():
         is_correct = (predicted == correct_answer)
         if is_correct:
             num_correct += 1
-        
         results.append({
             "example": example,
             "prompt": prompt,
@@ -107,10 +87,8 @@ def main():
             "correct_answer": correct_answer,
             "is_correct": is_correct
         })
-
     accuracy = num_correct / len(examples) if examples else 0.0
     print(f"Accuracy: {accuracy * 100:.2f}% ({num_correct}/{len(examples)})")
-
     results_outfile = "mmlu_results.json"
     with open(results_outfile, "w", encoding="utf-8") as f:
         json.dump({
