@@ -117,6 +117,12 @@ def run_parse_gsm8k_response(
         str with the predicted numeric answer if the model output can be parsed into a prediction,
         else None.
     """
+    numbers = re.findall(r'[-+]?(?:\d*\.\d+|\d+)', model_output)
+    
+    if numbers:
+        return numbers[-1]
+    else:
+        return None
     raise NotImplementedError
 
 
