@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import logging
 from vllm import LLM, SamplingParams
 
 os.environ["VLLM_DISABLE_USAGE_REPORTING"] = "1"
@@ -24,13 +25,16 @@ def main():
     batch_size = 5
     outputs = []
     start_time = time.time()
+    
     for i in range(0, len(instructions), batch_size):
         batch_instructions = instructions[i:i+batch_size]
         batch_outputs = llm.generate(batch_instructions, sampling_params)
         outputs.extend(batch_outputs)
+    
     elapsed_time = time.time() - start_time
     throughput = len(instructions) / elapsed_time if elapsed_time > 0 else 0.0
     predictions = []
+    
     for ex, output in zip(examples, outputs):
         predictions.append({
             "instruction": ex["instruction"],
@@ -38,10 +42,12 @@ def main():
             "generator": generator_name,
             "dataset": ex.get("dataset", "alpaca_eval")
         })
+
     with open("alpaca_eval_outputs.json", "w", encoding="utf-8") as f:
         json.dump(predictions, f, indent=2)
-    print("Throughput (examples/sec):", throughput)
-    print("Results saved to alpaca_eval_outputs.json")
+    
+    logging.info("Throughput (examples/sec):", throughput)
+    logging.info("Results saved to alpaca_eval_outputs.json")
 
 if __name__ == "__main__":
     main()

@@ -2,7 +2,9 @@ import os
 import json
 import csv
 import time
+import logging
 from vllm import LLM, SamplingParams
+
 
 os.environ["VLLM_DISABLE_USAGE_REPORTING"] = "1"
 
@@ -24,22 +26,30 @@ def main():
     batch_size = 5
     outputs = []
     start_time = time.time()
+
     for i in range(0, len(instructions), batch_size):
         batch_instructions = instructions[i:i+batch_size]
         batch_outputs = llm.generate(batch_instructions, sampling_params)
         outputs.extend(batch_outputs)
+
     elapsed_time = time.time() - start_time
     throughput = len(instructions) / elapsed_time if elapsed_time > 0 else 0.0
-    output_filename = "simplesafety_outputs.jsonl"
+
+    predictions = []
+    
+    for ex, output in zip(examples, outputs):
+        prediction = {
+            "prompts_final": ex["prompts_final"],
+            "output": output.outputs[0].text.strip()
+        }
+        predictions.append(prediction)
+
+    output_filename = "simplesafety_outputs.json"
     with open(output_filename, "w", encoding="utf-8") as f:
-        for ex, output in zip(examples, outputs):
-            prediction = {
-                "prompts_final": ex["prompts_final"],
-                "output": output.outputs[0].text.strip()
-            }
-            f.write(json.dumps(prediction) + "\n")
-    print("Throughput (examples/sec):", throughput)
-    print("Results saved to", output_filename)
+        json.dump(predictions, f, indent=2)
+
+    logging.info("Throughput (examples/sec):", throughput)
+    logging.info("Results saved to", output_filename)
 
 if __name__ == "__main__":
     main()

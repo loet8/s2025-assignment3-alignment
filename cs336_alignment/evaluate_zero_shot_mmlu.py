@@ -55,23 +55,21 @@ def main():
     print(f"Loaded {len(examples)} MMLU examples.")
     prompts = [format_prompt(example) for example in examples]
     model_path = "../Qwen/Qwen2.5-0.5B"
-    sampling_params = SamplingParams(
-        temperature=0.0,
-        top_p=1.0,
-        max_tokens=512,
-        stop=["\n"]
-    )
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=512, stop=["\n"])
     llm = LLM(model=model_path)
     batch_size = 5
     outputs = []
+    
     for i in range(0, len(prompts), batch_size):
         batch_prompts = prompts[i:i+batch_size]
         print(f"Processing batch {i // batch_size + 1} / {((len(prompts)-1) // batch_size) + 1}")
         batch_outputs = llm.generate(batch_prompts, sampling_params)
         outputs.extend(batch_outputs)
         torch.cuda.empty_cache()
+    
     num_correct = 0
     results = []
+    
     for example, prompt, output in zip(examples, prompts, outputs):
         model_output = output.outputs[0].text
         predicted = adapters.run_parse_mmlu_response(example, model_output)
@@ -87,9 +85,11 @@ def main():
             "correct_answer": correct_answer,
             "is_correct": is_correct
         })
+    
     accuracy = num_correct / len(examples) if examples else 0.0
     print(f"Accuracy: {accuracy * 100:.2f}% ({num_correct}/{len(examples)})")
     results_outfile = "mmlu_results.json"
+    
     with open(results_outfile, "w", encoding="utf-8") as f:
         json.dump({
             "accuracy": accuracy,
