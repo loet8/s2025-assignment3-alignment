@@ -8,46 +8,52 @@ os.environ["VLLM_DISABLE_USAGE_REPORTING"] = "1"
 
 def load_alpaca_eval_examples(filepath: str):
     examples = []
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
-            if line.strip():
-                examples.append(json.loads(line.strip()))
+            line = line.strip()
+            if not line:
+                continue
+            examples.append(json.loads(line))
     return examples
 
 def main():
     filepath = "/Users/tiffanyloe/Desktop/ECE 491B/Assignment 3/s2025-assignment3-alignment/data/alpaca_eval/alpaca_eval.jsonl"
-    examples = load_alpaca_eval_examples(filepath)
-    instructions = [ex["instruction"] for ex in examples]
-    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=1024, stop=["\n"])
+    eval_set = load_alpaca_eval_examples(filepath)
+
     model_path = "../Qwen/Qwen2.5-0.5B" 
     generator_name = "qwen2.5-0.5b"
+
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=2048, stop=["\n"])
+    
     llm = LLM(model=model_path)
+
     batch_size = 5
-    outputs = []
+    all_outputs = []
     start_time = time.time()
     
-    for i in range(0, len(instructions), batch_size):
-        batch_instructions = instructions[i:i+batch_size]
-        batch_outputs = llm.generate(batch_instructions, sampling_params)
-        outputs.extend(batch_outputs)
-    
+    for i in range(0, len(eval_set), batch_size):
+        batch = eval_set[i:i + batch_size]
+        instructions = [ex['instruction'] for ex in batch]
+        # Generate completions
+        results = llm.generate(instructions, sampling_params)
+        for ex, out in zip(batch, results):
+            text = out.outputs[0].text.strip()
+            all_outputs.append({
+                "instruction": ex['instruction'],
+                "output": text,
+                "generator": generator_name,
+                "dataset": ex.get('dataset', 'alpaca_eval')
+            })
     elapsed_time = time.time() - start_time
-    throughput = len(instructions) / elapsed_time if elapsed_time > 0 else 0.0
-    predictions = []
-    
-    for ex, output in zip(examples, outputs):
-        predictions.append({
-            "instruction": ex["instruction"],
-            "output": output.outputs[0].text.strip(),
-            "generator": generator_name,
-            "dataset": ex.get("dataset", "alpaca_eval")
-        })
+    logging.info(f"Generated {len(all_outputs)} outputs in {elapsed_time:.1f}s ({len(all_outputs)/elapsed_time:.1f} ex/s)")
 
-    with open("alpaca_eval_outputs.json", "w", encoding="utf-8") as f:
-        json.dump(predictions, f, indent=2)
-    
-    logging.info("Throughput (examples/sec):", throughput)
-    logging.info("Results saved to alpaca_eval_outputs.json")
+    out_file = "alpaca_zero_shot_outputs.json"
+    with open(out_file, 'w', encoding='utf-8') as fout:
+        json.dump(all_outputs, fout, ensure_ascii=False, indent=2)
 
-if __name__ == "__main__":
+    logging.info(f"Wrote zero-shot predictions to {out_file}")
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     main()
