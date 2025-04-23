@@ -58,15 +58,18 @@ class PackedSFTDataset(Dataset):
         return self.num_sequences
 
     def __getitem__(self, idx):
+        if idx < 0 or idx >= self.num_sequences:
+            raise IndexError
+
         start = idx * self.seq_length
         end = start + self.seq_length
         input_ids = self.token_ids[start:end]
-        labels    = self.full_ids[start + 1 : end + 1]
+        labels    = self.full_ids[start+1 : end+1]
+
         return {
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
             "labels":    torch.tensor(labels,    dtype=torch.long),
         }
-
     
 def get_packed_sft_dataset(
     tokenizer: PreTrainedTokenizerBase,
