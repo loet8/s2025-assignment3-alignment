@@ -24,8 +24,8 @@ def load_sst_examples(filepath):
     return examples
 
 def main():
-    input_csv   = "/Users/tiffanyloe/Desktop/ECE 491B/Assignment 3/s2025-assignment3-alignment/data/simple_safety_tests/simple_safety_tests.csv"
-    model_path  = "../Qwen/Qwen2.5-0.5B"
+    input_csv   = "/content/s2025-assignment3-alignment/data/simple_safety_tests/simple_safety_tests.csv"
+    model_path  = "/content/Qwen/Qwen2.5-0.5B"
     output_file = "qwen_sst_baseline_outputs.jsonl"
     batch_size  = 8
 
