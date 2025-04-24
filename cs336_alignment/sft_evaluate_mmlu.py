@@ -7,14 +7,20 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 def load_mmlu_from_dir(dev_dir):
     examples = []
     for csv_path in sorted(glob.glob(os.path.join(dev_dir, "*_dev.csv"))):
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path, header=None)
+
+        if df.shape[1] != 6:
+            raise ValueError(f"{csv_path} has {df.shape[1]} columns, expected 6")
+
+        df.columns = ["question", "A", "B", "C", "D", "answer"]
+
         subject = os.path.basename(csv_path).split("_dev.csv")[0]
         for _, row in df.iterrows():
             examples.append({
                 "subject": subject,
                 "question": row["question"],
-                "options": [row[o] for o in ["A", "B", "C", "D"]],
-                "answer": row["answer"]
+                "options": [row[o] for o in ["A","B","C","D"]],
+                "answer":  row["answer"]
             })
     return examples
 
