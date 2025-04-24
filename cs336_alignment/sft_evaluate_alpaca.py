@@ -1,93 +1,76 @@
-import argparse
+import os
 import json
 import time
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import argparse
+from vllm import LLM, SamplingParams
 
-def load_alpacaeval(path):
+
+def load_alpaca_eval_examples(filepath: str):
     examples = []
-    with open(path) as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
-            obj = json.loads(line)
-            examples.append({
-                "id": obj["id"],
-                "instruction": obj["instruction"],
-                "input": obj.get("input","")
-            })
+            line = line.strip()
+            if not line:
+                continue
+            ex = json.loads(line)
+            examples.append(ex)
     return examples
 
-def format_prompt(inst, inp):
+
+def format_prompt(ex: dict) -> str:
+    instr = ex.get('instruction', '')
+    inp   = ex.get('input', '')
     if inp:
-        return f"""Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
-
-### Instruction:
-{inst}
-
-### Input:
-{inp}
-
-### Response:"""
-    else:
-        return f"""Below is an instruction. Write a response that appropriately completes the request.
-
-### Instruction:
-{inst}
-
-### Response:"""
+        return f"{instr}\n{inp}"
+    return instr
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--model-dir",    required=True)
-    p.add_argument("--tokenizer-dir",help="defaults to model-dir")
-    p.add_argument("--ae-path",      required=True,
-                   help="AlpacaEval JSONL file")
-    p.add_argument("--device",       default="cuda")
-    p.add_argument("--out",          default="alpacaeval_sft_preds.json")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-dir", required=True,
+                        help="Path to your fine-tuned Qwen2.5-0.5B model")
+    parser.add_argument("--ae-path",    required=True,
+                        help="Path to AlpacaEval JSONL file (e.g. alpaca_eval.jsonl)")
+    parser.add_argument("--batch-size", type=int, default=5)
+    parser.add_argument("--max-tokens", type=int, default=512)
+    parser.add_argument("--out-file",   default="alpaca_sft_outputs.json")
+    args = parser.parse_args()
 
-    device    = torch.device(args.device)
-    tok_dir   = args.tokenizer_dir or args.model_dir
-    tokenizer = AutoTokenizer.from_pretrained(tok_dir, trust_remote_code=True)
-    model     = AutoModelForCausalLM.from_pretrained(
-                    args.model_dir,
-                    torch_dtype=torch.bfloat16,
-                    attn_implementation="flash_attention_2",
-                    trust_remote_code=True
-                ).to(device)
-    model.eval()
+    examples = load_alpaca_eval_examples(args.ae_path)
+    print(f"Loaded {len(examples)} AlpacaEval examples")
 
-    examples = load_alpacaeval(args.ae_path)
-    start = time.time()
+    llm = LLM(model=args.model_dir)
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=args.max_tokens,
+        stop=["\n"],
+    )
+
+    prompts = [format_prompt(ex) for ex in examples]
+
+    t0 = time.time()
     outputs = []
+    for i in range(0, len(prompts), args.batch_size):
+        batch = prompts[i : i + args.batch_size]
+        batch_outputs = llm.generate(batch, sampling_params)
+        outputs.extend(batch_outputs)
+    elapsed = time.time() - t0
+    throughput = len(prompts) / elapsed
 
-    for ex in examples:
-        prompt = format_prompt(ex["instruction"], ex["input"])
-        inputs = tokenizer(prompt, return_tensors="pt").to(device)
-        with torch.no_grad():
-            gen = model.generate(
-                **inputs,
-                max_new_tokens=256,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-        resp = tokenizer.decode(
-            gen[0, inputs.input_ids.shape[-1]:],
-            skip_special_tokens=True
-        ).strip()
-        outputs.append({
-            "id": ex["id"],
-            "prompt": prompt,
-            "model_response": resp,
+    preds = []
+    for ex, out in zip(examples, outputs):
+        text = out.outputs[0].text
+        preds.append({
+            "instruction": ex.get("instruction", ""),
+            "output":      text,
+            "generator":   "qwen2.5-0.5b-sft",
+            "dataset":     ex.get("dataset", "alpaca_eval"),
         })
 
-    elapsed = time.time() - start
-    throughput = len(outputs) / elapsed
-    print(f"→ AlpacaEval throughput: {throughput:.2f} ex/s")
+    with open(args.out_file, 'w', encoding='utf-8') as fout:
+        json.dump(preds, fout, ensure_ascii=False)
+    print(f"Wrote {len(preds)} SFT predictions to {args.out_file}")
+    print(f"Throughput: {throughput:.2f} ex/s")
 
-    # save predictions
-    with open(args.out, "w") as f:
-        json.dump(outputs, f, indent=2)
-    print(f"Saved {len(outputs)} model outputs to {args.out}")
-
-if __name__=="__main__":
+if __name__ == '__main__':
     main()
