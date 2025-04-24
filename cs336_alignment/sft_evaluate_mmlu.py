@@ -1,98 +1,122 @@
-#!/usr/bin/env python3
-import argparse, glob, json, os, time, random
-import pandas as pd
+import os
+import csv
+import json
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import argparse
+import time
+from typing import Any, List, Dict
+from vllm import LLM, SamplingParams
+from tests import adapters
 
-def load_mmlu_from_dir(dev_dir):
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+def load_mmlu_csv(csv_path: str, subject: str) -> List[Dict[str, Any]]:
     examples = []
-    for csv_path in sorted(glob.glob(os.path.join(dev_dir, "*_dev.csv"))):
-        df = pd.read_csv(csv_path, header=None)
-
-        if df.shape[1] != 6:
-            raise ValueError(f"{csv_path} has {df.shape[1]} columns, expected 6")
-
-        df.columns = ["question", "A", "B", "C", "D", "answer"]
-
-        subject = os.path.basename(csv_path).split("_dev.csv")[0]
-        for _, row in df.iterrows():
-            examples.append({
+    with open(csv_path, mode="r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row or len(row) < 6:
+                continue
+            example = {
                 "subject": subject,
-                "question": row["question"],
-                "options": [row[o] for o in ["A","B","C","D"]],
-                "answer":  row["answer"]
-            })
+                "question": row[0],
+                "options": [row[1], row[2], row[3], row[4]],
+                "answer": row[-1].strip().upper()
+            }
+            examples.append(example)
     return examples
 
-def format_prompt(ex):
-    opts = "\n".join(f"{chr(65+i)}. {opt}" for i,opt in enumerate(ex["options"]))
-    return (
-        f"Answer the following multiple choice question about {ex['subject']}."
-        " Respond with a single sentence of the form \"The correct answer is _\","
-        " filling the blank with the letter corresponding to the correct answer (i.e., A, B, C or D).\n\n"
-        f"Question: {ex['question']}\n{opts}\nAnswer:"
-    )
+def load_all_examples(base_dir: str) -> List[Dict[str, Any]]:
+    examples = []
+    for file in os.listdir(base_dir):
+        if file.endswith(".csv"):
+            base_name = os.path.splitext(file)[0]
+            subject = base_name.replace("_dev", "").replace("_test", "").replace("_val", "")
+            csv_path = os.path.join(base_dir, file)
+            print(f"Loading {csv_path} for subject: {subject}")
+            examples.extend(load_mmlu_csv(csv_path, subject))
+    return examples
 
-def extract_prediction(text):
-    for ch in text.strip():
-        if ch in "ABCD":
-            return ch
-    return ""
+def format_prompt(example: Dict[str, Any]) -> str:
+    prompt = (
+        f"Answer the following multiple choice question about {example['subject']}. "
+        f"Respond with a single sentence of the form \"The correct answer is _\", "
+        f"filling the blank with the letter corresponding to the correct answer (i.e., A, B, C or D).\n\n"
+        f"Question: {example['question']}\n"
+        f"A. {example['options'][0]}\n"
+        f"B. {example['options'][1]}\n"
+        f"C. {example['options'][2]}\n"
+        f"D. {example['options'][3]}\n"
+        f"Answer:"
+    )
+    return prompt
+
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model-dir", required=True)
-    p.add_argument("--mmlu-dir",  required=True)
-    p.add_argument("--device",    default="cuda")
+    p.add_argument("--model-dir", required=True,
+                   help="Path to your fine-tuned Qwen2.5-0.5B model")
+    p.add_argument("--mmlu-dir", required=True,
+                   help="Directory containing MMLU .csv files (dev/test splits)")
+    p.add_argument("--batch-size", type=int, default=5)
+    p.add_argument("--max-tokens", type=int, default=512)
+    p.add_argument("--out-file", default="mmlu_sft_results.json")
     args = p.parse_args()
 
-    device = torch.device(args.device)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_dir,
-        torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
-        trust_remote_code=True,
-    ).to(device)
-    model.eval()
+    examples = load_all_examples(args.mmlu_dir)
+    print(f"Loaded {len(examples)} examples")
 
-    examples = load_mmlu_from_dir(args.mmlu_dir)
-    results = []
+    prompts = [format_prompt(ex) for ex in examples]
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=args.max_tokens,
+        stop=["\n"],
+    )
+    llm = LLM(model=args.model_dir)
+
     t0 = time.time()
-    for ex in examples:
-        prompt = format_prompt(ex)
-        inputs = tokenizer(prompt, return_tensors="pt").to(device)
-        with torch.no_grad():
-            out = model.generate(
-                **inputs,
-                max_new_tokens=1,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-        gen = tokenizer.decode(out[0, inputs.input_ids.shape[-1]:], skip_special_tokens=True)
-        pred = extract_prediction(gen)
-        results.append({
-            "question": ex["question"],
-            "predicted": pred,
-            "correct": ex["answer"],
-            "is_correct": pred == ex["answer"],
-            "model_output": gen.strip(),
-        })
+    outputs = []
+    for i in range(0, len(prompts), args.batch_size):
+        batch = prompts[i : i + args.batch_size]
+        batch_out = llm.generate(batch, sampling_params)
+        outputs.extend(batch_out)
+        torch.cuda.empty_cache()
     elapsed = time.time() - t0
 
-    total   = len(results)
-    correct = sum(r["is_correct"] for r in results)
-    print(f"→ Throughput: {total/elapsed:.2f} examples/s")
-    print(f"→ Accuracy:   {correct/total*100:.2f}% ({correct}/{total})")
+    num_correct = 0
+    results = []
+    for ex, prompt, out in zip(examples, prompts, outputs):
+        text = out.outputs[0].text
+        pred = adapters.run_parse_mmlu_response(ex, text)
+        corr = ex["answer"]
+        is_corr = (pred == corr)
+        if is_corr:
+            num_correct += 1
+        results.append({
+            "example":        ex,
+            "prompt":         prompt,
+            "model_output":   text,
+            "predicted":      pred,
+            "correct_answer": corr,
+            "is_correct":     is_corr,
+        })
 
-    errors = [r for r in results if not r["is_correct"]]
-    print("\nSample errors:")
-    for r in random.sample(errors, min(10,len(errors))):
-        print(f"Q: {r['question']}\n  → out: {r['model_output']}  pred: {r['predicted']}  gold: {r['correct']}\n")
+    throughput = len(prompts) / elapsed
+    accuracy   = num_correct / len(prompts) * 100
 
-    with open("mmlu_sft_results.json","w") as f:
-        json.dump(results, f, indent=2)
-    print("Saved full results to mmlu_sft_results.json")
+    print(f"Throughput: {throughput:.2f} examples/s")
+    print(f"Accuracy:   {accuracy:.2f}% ({num_correct}/{len(prompts)})")
 
-if __name__=="__main__":
+    with open(args.out_file, "w", encoding="utf-8") as fout:
+        json.dump({
+            "throughput": throughput,
+            "accuracy":   accuracy,
+            "num_correct": num_correct,
+            "total":      len(prompts),
+            "results":    results,
+        }, fout, indent=2)
+    print(f"Results saved to {args.out_file}")
+
+if __name__ == "__main__":
     main()
