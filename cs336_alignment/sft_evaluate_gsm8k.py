@@ -1,76 +1,91 @@
-#!/usr/bin/env python3
-import argparse
+import os
 import json
 import time
+import argparse
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from typing import Any, Dict, List
+from vllm import LLM, SamplingParams
+from tests import adapters 
 
-def load_gsm8k(path):
-    data = []
-    with open(path, "r") as f:
+def load_gsm8k_examples(filepath: str) -> List[Dict[str, Any]]:
+    examples = []
+    with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
+            if not line.strip():
+                continue
             ex = json.loads(line)
-            data.append({
-                "question": ex["question"],
-                "answer": ex.get("parsed_answer") or ex.get("answer").split()[-1],
+            examples.append({
+                "question": ex["question"].strip(),
+                "answer": ex.get("parsed_answer") or ex.get("answer").split()[-1]
             })
-    return data
+    return examples
 
-def format_prompt(question):
-    return f"{question}\n\nAnswer:"
-
-def extract_number(text):
-    for token in text.strip().split():
-        token = token.strip(".,")
-        if token.replace(".", "", 1).isdigit():
-            return token
-    return ""
+def format_prompt(example: Dict[str, Any]) -> str:
+    return f"{example['question']}\n\nAnswer:"
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--model-dir",     required=True)
-    p.add_argument("--tokenizer-dir", help="Defaults to model-dir")
-    p.add_argument("--gsm8k-path",    required=True)
-    p.add_argument("--device",        default="cuda")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-dir",    required=True,
+                        help="Path to fine-tuned Qwen2.5-0.5B model")
+    parser.add_argument("--gsm8k-path",   required=True,
+                        help="Path to the GSM8K JSONL file")
+    parser.add_argument("--batch-size",   type=int, default=5)
+    parser.add_argument("--max-tokens",   type=int, default=1024)
+    parser.add_argument("--out-file",     default="gsm8k_sft_results.json")
+    args = parser.parse_args()
 
-    device    = torch.device(args.device)
-    tok_dir   = args.tokenizer_dir or args.model_dir
-    tokenizer = AutoTokenizer.from_pretrained(tok_dir, trust_remote_code=True)
-    model     = AutoModelForCausalLM.from_pretrained(
-        args.model_dir,
-        torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
-        trust_remote_code=True
-    ).to(device)
-    model.eval()
+    examples = load_gsm8k_examples(args.gsm8k_path)
+    print(f"Loaded {len(examples)} examples for GSM8K SFT evaluation")
 
-    examples = load_gsm8k(args.gsm8k_path)
-    total, correct = 0, 0
+    prompts = [format_prompt(ex) for ex in examples]
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=args.max_tokens,
+        stop=["\n"],
+    )
+    llm = LLM(model=args.model_dir)
+
     t0 = time.time()
-
-    for ex in examples:
-        prompt = format_prompt(ex["question"])
-        inputs = tokenizer(prompt, return_tensors="pt").to(device)
-        with torch.no_grad():
-            out = model.generate(
-                **inputs,
-                max_new_tokens=50,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id
-            )
-        gen = tokenizer.decode(out[0, inputs.input_ids.shape[-1]:], skip_special_tokens=True)
-        pred = extract_number(gen)
-        if pred == ex["answer"]:
-            correct += 1
-        total += 1
-
+    outputs = []
+    for i in range(0, len(prompts), args.batch_size):
+        batch = prompts[i : i + args.batch_size]
+        outputs.extend(llm.generate(batch, sampling_params))
+        torch.cuda.empty_cache()
     elapsed = time.time() - t0
-    throughput = total / elapsed
-    accuracy = correct / total * 100
 
+    num_correct = 0
+    results = []
+    for ex, prompt, out in zip(examples, prompts, outputs):
+        text = out.outputs[0].text
+        pred = adapters.run_parse_gsm8k_response(text)
+        corr = ex["answer"]
+        is_corr = (pred == corr)
+        if is_corr:
+            num_correct += 1
+        results.append({
+            "question":       ex["question"],
+            "prompt":         prompt,
+            "model_output":   text,
+            "predicted":      pred,
+            "correct_answer": corr,
+            "is_correct":     is_corr,
+        })
+
+    throughput = len(prompts) / elapsed
+    accuracy   = num_correct / len(prompts) * 100
     print(f"Throughput: {throughput:.2f} examples/s")
-    print(f"Accuracy:   {accuracy:.2f}% ({correct}/{total})")
+    print(f"Accuracy:   {accuracy:.2f}% ({num_correct}/{len(prompts)})")
+
+    with open(args.out_file, "w", encoding="utf-8") as fout:
+        json.dump({
+            "throughput":   throughput,
+            "accuracy":     accuracy,
+            "num_correct":  num_correct,
+            "total":        len(prompts),
+            "results":      results,
+        }, fout, indent=2)
+    print(f"Wrote detailed results to {args.out_file}")
 
 if __name__ == "__main__":
     main()
