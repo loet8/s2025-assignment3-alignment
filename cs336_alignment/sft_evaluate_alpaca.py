@@ -18,7 +18,7 @@ from tests import adapters  # required if using custom tokenizer logic
 
 
 model_dir = "/content/sft_model_local"
-alpaca_eval_path = "/content/data/alpaca_eval/alpaca_eval.jsonl"
+alpaca_eval_path = "/content/s2025-assignment3-alignment/data/alpaca_eval/alpaca_eval.jsonl"
 batch_size = 5
 max_tokens = 1024
 out_file = "alpaca_eval_sft_outputs.jsonl"
