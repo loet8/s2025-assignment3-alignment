@@ -21,7 +21,7 @@ model_dir = "/content/sft_model_local"
 alpaca_eval_path = "/content/s2025-assignment3-alignment/data/alpaca_eval/alpaca_eval.jsonl"
 batch_size = 5
 max_tokens = 1024
-out_file = "alpaca_eval_sft_outputs.jsonl"
+out_file = "alpaca_eval_sft_outputs.json"
 
 
 def load_alpaca_eval_examples(filepath: str):
@@ -56,16 +56,18 @@ def main():
         sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
         outputs.extend(sub_outputs)
     end_time = time.time()
+    
+    records = []
+    for ex, out, prompt in zip(examples, outputs, prompts):
+        response = out.outputs[0].text.strip()
+        records.append({
+            "instruction": ex["instruction"],
+            "response":    response,
+            "prompt":      prompt
+        })
 
     with open(out_file, "w", encoding="utf-8") as f:
-        for ex, out, prompt in zip(examples, outputs, prompts):
-            response = out.outputs[0].text.strip()
-            record = {
-                "instruction": ex["instruction"],
-                "response": response,
-                "prompt": prompt
-            }
-            f.write(json.dumps(record) + "\n")
+        json.dump(records, f, indent=2)
 
     throughput = len(prompts) / (end_time - start_time)
     print(f"Throughput: {throughput:.2f} examples/second")
