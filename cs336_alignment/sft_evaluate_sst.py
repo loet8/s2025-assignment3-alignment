@@ -54,7 +54,7 @@ def main():
         outputs.extend(sub_outputs)
     end_time = time.time()
 
-   with open(out_file, "w", encoding="utf-8") as f:
+    with open(out_file, "w", encoding="utf-8") as f:
         for ex, out, prompt in zip(examples, outputs, prompts):
             response = out.outputs[0].text.strip()
             record = {
