@@ -1,76 +1,65 @@
 import os
 import json
 import time
-import argparse
+import sys
+
+repo_root = os.path.abspath(os.path.join(__file__, "..", ".."))
+sys.path.insert(0, repo_root)
+
 from vllm import LLM, SamplingParams
+from tests import adapters  # required if using custom tokenizer logic
+
+
+model_dir = "/content/models/qwen2.5-0.5B-sft"
+alpaca_eval_path = "/content/data/alpaca_eval/alpaca_eval.jsonl"
+batch_size = 5
+max_tokens = 1024
+out_file = "alpaca_eval_sft_outputs.jsonl"
 
 
 def load_alpaca_eval_examples(filepath: str):
     examples = []
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            ex = json.loads(line)
-            examples.append(ex)
+            if line.strip():
+                examples.append(json.loads(line.strip()))
     return examples
 
 
-def format_prompt(ex: dict) -> str:
-    instr = ex.get('instruction', '')
-    inp   = ex.get('input', '')
-    if inp:
-        return f"{instr}\n{inp}"
-    return instr
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-dir", required=True,
-                        help="Path to your fine-tuned Qwen2.5-0.5B model")
-    parser.add_argument("--ae-path",    required=True,
-                        help="Path to AlpacaEval JSONL file (e.g. alpaca_eval.jsonl)")
-    parser.add_argument("--batch-size", type=int, default=5)
-    parser.add_argument("--max-tokens", type=int, default=512)
-    parser.add_argument("--out-file",   default="alpaca_sft_outputs.json")
-    args = parser.parse_args()
-
-    examples = load_alpaca_eval_examples(args.ae_path)
-    print(f"Loaded {len(examples)} AlpacaEval examples")
-
-    llm = LLM(model=args.model_dir)
-    sampling_params = SamplingParams(
-        temperature=0.0,
-        top_p=1.0,
-        max_tokens=args.max_tokens,
-        stop=["\n"],
+def format_instruction_prompt(example):
+    return (
+        "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+        "### Instruction:\n"
+        f"{example['instruction']}\n\n"
+        "### Response:"
     )
 
-    prompts = [format_prompt(ex) for ex in examples]
 
-    t0 = time.time()
-    outputs = []
-    for i in range(0, len(prompts), args.batch_size):
-        batch = prompts[i : i + args.batch_size]
-        batch_outputs = llm.generate(batch, sampling_params)
-        outputs.extend(batch_outputs)
-    elapsed = time.time() - t0
-    throughput = len(prompts) / elapsed
+def main():
+    examples = load_alpaca_eval_examples(alpaca_eval_path)
+    prompts = [format_instruction_prompt(ex) for ex in examples]
 
-    preds = []
-    for ex, out in zip(examples, outputs):
-        text = out.outputs[0].text
-        preds.append({
-            "instruction": ex.get("instruction", ""),
-            "output":      text,
-            "generator":   "qwen2.5-0.5b-sft",
-            "dataset":     ex.get("dataset", "alpaca_eval"),
-        })
+    model = LLM(model=model_dir)
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["###"])
 
-    with open(args.out_file, 'w', encoding='utf-8') as fout:
-        json.dump(preds, fout, ensure_ascii=False)
-    print(f"Wrote {len(preds)} SFT predictions to {args.out_file}")
-    print(f"Throughput: {throughput:.2f} ex/s")
+    print(f"Evaluating {len(prompts)} AlpacaEval examples...")
+    start_time = time.time()
+    outputs = model.generate(prompts, sampling_params=sampling_params, batch_size=batch_size)
+    end_time = time.time()
 
-if __name__ == '__main__':
+    with open(out_file, "w", encoding="utf-8") as f:
+        for ex, out, prompt in zip(examples, outputs, prompts):
+            response = out.outputs[0].text.strip()
+            record = {
+                "instruction": ex["instruction"],
+                "response": response,
+                "prompt": prompt
+            }
+            f.write(json.dumps(record) + "\n")
+
+    throughput = len(prompts) / (end_time - start_time)
+    print(f"Throughput: {throughput:.2f} examples/second")
+    print(f"Results saved to: {out_file}")
+
+if __name__ == "__main__":
     main()
