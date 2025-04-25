@@ -12,7 +12,7 @@ from vllm import LLM, SamplingParams
 from tqdm import tqdm
 from tests import adapters  
 
-model_dir = "/content/drive/MyDrive/Training files Assignment 3/Model Outputs/sft model"   
+model_dir = "/content/sft_model_local"   
 mmlu_dir = "/content/s2025-assignment3-alignment/data/mmlu/dev"              
 batch_size = 5
 max_tokens = 512
