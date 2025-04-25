@@ -17,7 +17,7 @@ from tqdm import tqdm
 from tests import adapters  # required if using custom tokenizer logic
 
 
-model_dir = "/content/models/qwen2.5-0.5B-sft"
+model_dir = "/content/sft_model_local"
 alpaca_eval_path = "/content/data/alpaca_eval/alpaca_eval.jsonl"
 batch_size = 5
 max_tokens = 1024
