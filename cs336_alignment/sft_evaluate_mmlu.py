@@ -1,88 +1,99 @@
-import argparse
-import json
 import os
-import sys
+import csv
+import json
+import torch
 import time
-from pathlib import Path
-
-repo_root = os.path.abspath(os.path.join(__file__, "..", ".."))
-sys.path.insert(0, repo_root)
-
-
 from vllm import LLM, SamplingParams
 from tests import adapters  
 
-def format_sft_prompt(example: dict) -> str:
-    """Wraps an MMLU example in the Alpaca-style instruction-tuning template."""
-    q       = example["question"]
-    opts    = example["options"]
+model_dir = "/content/models/qwen2.5-0.5B-sft"   
+mmlu_dir = "/content/data/mmlu/dev"              
+batch_size = 5
+max_tokens = 512
+out_file = "mmlu_sft_outputs.jsonl"
+
+
+def load_mmlu_csv(csv_path: str, subject: str):
+    examples = []
+    with open(csv_path, mode="r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row or len(row) < 6:
+                continue
+            example = {
+                "subject": subject,
+                "question": row[0],
+                "options": [row[1], row[2], row[3], row[4]],
+                "answer": row[-1].strip().upper()
+            }
+            examples.append(example)
+    return examples
+
+def format_instruction_prompt(example):
+    options = "\n".join([f"{chr(65 + i)}. {opt}" for i, opt in enumerate(example["options"])])
+    full_question = f"{example['question']}\n\n{options}"
     return (
         "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
         "### Instruction:\n"
-        f"{q}\n"
-        f"A. {opts[0]}\n"
-        f"B. {opts[1]}\n"
-        f"C. {opts[2]}\n"
-        f"D. {opts[3]}\n\n"
+        f"{full_question}\n\n"
         "### Response:"
     )
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path",
-                        help="Path to your fine-tuned Qwen2.5-0.5B model")
-    parser.add_argument("--mmlu-dir",
-                        help="Directory with MMLU JSONL files")
-    parser.add_argument("--batch-size", type=int, default=5)     
-    parser.add_argument("--max-tokens",   type=int, default=512)
-               
-    parser.add_argument("--out-file", default="mmlu_sft_results.json",
-                        help="Where to write evaluation results")
-    args = parser.parse_args()
+def evaluate():
+    files = [f for f in os.listdir(mmlu_dir) if f.endswith(".csv")]
+    total_correct = 0
+    total_examples = 0
+    all_start = time.time()
 
-    examples = []
-    for fn in Path(args.mmlu_dir).glob("*.jsonl"):
-        with open(fn) as f:
-            for line in f:
-                examples.append(json.loads(line))
+    for filename in files:
+        path_to_csv = os.path.join(mmlu_dir, filename)
+        examples = load_mmlu_csv(path_to_csv)
+        prompts = [format_instruction_prompt(ex) for ex in examples]
+        labels = [ex["answer"] for ex in examples]
 
-    prompts = [format_sft_prompt(ex) for ex in examples]
+        model = LLM(model=model_dir)
+        sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["\n"])
 
-    llm = LLM(model=args.model_path)
-    sampling_params = SamplingParams(
-        temperature=0.0, top_p=1.0, max_tokens=512, stop=["\n"]
-    )
+        print(f"\nEvaluating {len(prompts)} examples from {filename}")
+        start_time = time.time()
+        outputs = model.generate(prompts, sampling_params=sampling_params, batch_size=batch_size)
+        end_time = time.time()
 
-    results = []
-    t_start = time.time()
-    for i in range(0, len(prompts), args.batch_size):
-        batch_prompts = prompts[i : i + args.batch_size]
-        outputs = llm.generate(batch_prompts, sampling_params)
-        for ex, out in zip(examples[i : i + args.batch_size], outputs):
-            gen = out.outputs[0].text.strip()
-            pred = adapters.parse_mmlu_response(gen)
-            corr = ex["answer"]
-            results.append({
-                "example": ex,
-                "prompt": batch_prompts[0],
-                "model_output": gen,
-                "predicted": pred,
-                "correct_answer": corr,
-                "is_correct": (pred == corr)
-            })
+        correct_count = 0
+        results = []
 
-    elapsed = time.time() - t_start
-    throughput = len(prompts) / elapsed
-    accuracy   = sum(r["is_correct"] for r in results) / len(results) * 100
+        out_file = f"mmlu_outputs_{filename.replace('.csv', '')}.jsonl"
+        with open(out_file, "w", encoding="utf-8") as f:
+            for ex, out, label, prompt in zip(examples, outputs, labels, prompts):
+                raw_response = out.outputs[0].text.strip()
+                prediction = next((ch for ch in raw_response if ch in "ABCD"), raw_response.split()[0] if raw_response else "")
+                is_correct = prediction == label
+                correct_count += int(is_correct)
 
-    out = {
-        "throughput": throughput,
-        "accuracy": accuracy,
-        "total": len(results),
-        "results": results
-    }
-    with open(args.out_file, "w") as fout:
-        json.dump(out, fout, indent=2)
+                result = {
+                    "question": ex["question"],
+                    "options": ex["options"],
+                    "correct": label,
+                    "predicted": prediction,
+                    "is_correct": is_correct,
+                    "model_output": raw_response,
+                    "prompt": prompt
+                }
+                results.append(result)
+                f.write(json.dumps(result) + "\n")
+
+        total_correct += correct_count
+        total_examples += len(results)
+        
+
+    overall_time = time.time() - all_start
+    overall_accuracy = total_correct / total_examples * 100
+    overall_throughput = total_examples / overall_time
+    print(f"Overall Accuracy: {overall_accuracy:.2f}% ({total_correct}/{total_examples})")
+    print(f"Overall Throughput: {overall_throughput:.2f} examples/sec")
+
+
+
 
 if __name__ == "__main__":
-    main()
+    evaluate()
