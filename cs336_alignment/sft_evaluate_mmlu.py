@@ -63,7 +63,7 @@ def main():
         start_time = time.time()
 
         outputs = []
-        for i in tqdm(range(0, len(prompts), 1)):  # 1 prompt at a time
+        for i in tqdm(range(0, len(prompts), 1)): 
             sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
             outputs.extend(sub_outputs)
 
