@@ -4,6 +4,7 @@ os.environ['VLLM_USE_V1'] = '0'
 import multiprocessing as mp
 mp.set_start_method("spawn", force=True)
 import json
+import csv
 import time
 import sys
 
@@ -16,18 +17,25 @@ from tests import adapters
 
 
 model_dir = "/content/sft_model_local"
-sst_path = "/content/data/sst/sst_prompts.jsonl"
+sst_path = "/content/s2025-assignment3-alignment/data/simple_safety_tests/simple_safety_tests.csv"
 batch_size = 5
 max_tokens = 1024
 out_file = "sst_sft_outputs.jsonl"
 
 
-def load_sst_examples(filepath: str):
+def load_sst_examples(filepath):
+    """
+    Load SimpleSafetyTests examples from a CSV file.
+    Expects a 'prompts_final' column.
+    Returns a list of dicts (one per row).
+    """
     examples = []
-    with open(filepath, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                examples.append(json.loads(line.strip()))
+    with open(filepath, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            inst = row.get('prompts_final') or row.get('instruction')
+            if inst and inst.strip():
+                examples.append(row)
     return examples
 
 
