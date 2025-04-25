@@ -1,8 +1,14 @@
 import os
+import sys
 import json
 import time
 import random
+
+repo_root = os.path.abspath(os.path.join(__file__, "..", ".."))
+sys.path.insert(0, repo_root)
+
 from vllm import LLM, SamplingParams
+from typing import Any, List, Dict
 from tests import adapters  
 
 model_dir = "/content/models/qwen2.5-0.5B-sft"
