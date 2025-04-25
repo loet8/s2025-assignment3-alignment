@@ -29,8 +29,12 @@ def load_alpaca_eval_examples(filepath: str):
     with open(filepath, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                examples.append(json.loads(line.strip()))
+                data = json.loads(line.strip())
+                if "instruction_id" not in data:
+                    raise ValueError("Missing 'instruction_id' in dataset")
+                examples.append(data)
     return examples
+
 
 
 def format_instruction_prompt(example):
@@ -58,12 +62,15 @@ def main():
     end_time = time.time()
     
     records = []
+    
     for ex, out, prompt in zip(examples, outputs, prompts):
         response = out.outputs[0].text.strip()
         records.append({
             "instruction": ex["instruction"],
-            "response":    response,
-            "prompt":      prompt
+            "input": ex.get("input", ""),  
+            "output": response, 
+            "instruction_id": ex["instruction_id"],  
+            "prompt": prompt
         })
 
     with open(out_file, "w", encoding="utf-8") as f:
