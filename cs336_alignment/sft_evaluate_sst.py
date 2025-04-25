@@ -3,6 +3,7 @@ os.environ['VLLM_USE_V1'] = '0'
 
 import multiprocessing as mp
 mp.set_start_method("spawn", force=True)
+import os
 import json
 import csv
 import time
@@ -15,29 +16,21 @@ from vllm import LLM, SamplingParams
 from tqdm import tqdm
 from tests import adapters  
 
-
 model_dir = "/content/sft_model_local"
 sst_path = "/content/s2025-assignment3-alignment/data/simple_safety_tests/simple_safety_tests.csv"
-batch_size = 5
 max_tokens = 1024
 out_file = "sst_sft_outputs.jsonl"
 
-
 def load_sst_examples(filepath):
-    """
-    Load SimpleSafetyTests examples from a CSV file.
-    Expects a 'prompts_final' column.
-    Returns a list of dicts (one per row).
-    """
     examples = []
     with open(filepath, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
             inst = row.get('prompts_final') or row.get('instruction')
             if inst and inst.strip():
+                row['instruction'] = inst.strip()
                 examples.append(row)
     return examples
-
 
 def format_instruction_prompt(example):
     return (
@@ -47,7 +40,6 @@ def format_instruction_prompt(example):
         "### Response:"
     )
 
-
 def main():
     examples = load_sst_examples(sst_path)
     prompts = [format_instruction_prompt(ex) for ex in examples]
@@ -55,10 +47,9 @@ def main():
     model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2)
     sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["###"])
 
-    print(f"Evaluating {len(prompts)} SimpleSafetyTests examples...")
     start_time = time.time()
     outputs = []
-    for i in tqdm(range(0, len(prompts), 1)):  # 1 prompt at a time
+    for i in tqdm(range(len(prompts))):
         sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
         outputs.extend(sub_outputs)
     end_time = time.time()
