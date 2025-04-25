@@ -2,6 +2,11 @@ import os
 import sys
 import csv
 import json
+
+import multiprocessing as mp
+mp.set_start_method("spawn", force=True)
+
+
 import torch
 import time
 
