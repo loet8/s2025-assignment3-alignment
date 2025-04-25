@@ -7,6 +7,7 @@ repo_root = os.path.abspath(os.path.join(__file__, "..", ".."))
 sys.path.insert(0, repo_root)
 
 from vllm import LLM, SamplingParams
+from tqdm import tqdm
 from tests import adapters  # required if using custom tokenizer logic
 
 
@@ -44,7 +45,10 @@ def main():
 
     print(f"Evaluating {len(prompts)} AlpacaEval examples...")
     start_time = time.time()
-    outputs = model.generate(prompts, sampling_params=sampling_params, batch_size=batch_size)
+    outputs = []
+    for i in tqdm(range(0, len(prompts), 1)): 
+        sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
+        outputs.extend(sub_outputs)
     end_time = time.time()
 
     with open(out_file, "w", encoding="utf-8") as f:
