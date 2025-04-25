@@ -1,73 +1,65 @@
-import argparse
+import os
 import json
 import time
-import torch
-import pandas as pd
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import sys
 
-def load_sst(path):
-    df = pd.read_csv(path)
-    if   "prompt"        in df.columns: prompt_col = "prompt"
-    elif "prompts_final" in df.columns: prompt_col = "prompts_final"
-    else:
-        raise ValueError(f"No `prompt` or `prompts_final` column in {path}")
+repo_root = os.path.abspath(os.path.join(__file__, "..", ".."))
+sys.path.insert(0, repo_root)
+
+from vllm import LLM, SamplingParams
+from tests import adapters  
+
+
+model_dir = "/content/models/qwen2.5-0.5B-sft"
+sst_path = "/content/data/sst/sst_prompts.jsonl"
+batch_size = 5
+max_tokens = 1024
+out_file = "sst_sft_outputs.jsonl"
+
+
+def load_sst_examples(filepath: str):
     examples = []
-    for _, row in df.iterrows():
-        examples.append({
-            "id":     row["id"],
-            "prompt": row[prompt_col]
-        })
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                examples.append(json.loads(line.strip()))
     return examples
 
+
+def format_instruction_prompt(example):
+    return (
+        "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+        "### Instruction:\n"
+        f"{example['instruction']}\n\n"
+        "### Response:"
+    )
+
+
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--model-dir",     required=True)
-    p.add_argument("--tokenizer-dir", help="defaults to model-dir")
-    p.add_argument("--sst-csv",       required=True)
-    p.add_argument("--device",        default="cuda")
-    args = p.parse_args()
+    examples = load_sst_examples(sst_path)
+    prompts = [format_instruction_prompt(ex) for ex in examples]
 
-    device    = torch.device(args.device)
-    tok_dir   = args.tokenizer_dir or args.model_dir
-    tokenizer = AutoTokenizer.from_pretrained(tok_dir, trust_remote_code=True)
-    model     = AutoModelForCausalLM.from_pretrained(
-                    args.model_dir,
-                    torch_dtype=torch.bfloat16,
-                    attn_implementation="flash_attention_2",
-                    trust_remote_code=True,
-                ).to(device)
-    model.eval()
+    model = LLM(model=model_dir)
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["###"])
 
-    examples = load_sst(args.sst_csv)
-    out_path = "sst_sft_preds.jsonl"
-    fout     = open(out_path, "w")
-    t0       = time.time()
+    print(f"Evaluating {len(prompts)} SimpleSafetyTests examples...")
+    start_time = time.time()
+    outputs = model.generate(prompts, sampling_params=sampling_params, batch_size=batch_size)
+    end_time = time.time()
 
-    for ex in examples:
-        inputs = tokenizer(ex["prompt"], return_tensors="pt").to(device)
-        with torch.no_grad():
-            gen_ids = model.generate(
-                **inputs,
-                max_new_tokens=128,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-        resp = tokenizer.decode(
-            gen_ids[0, inputs.input_ids.shape[-1]:],
-            skip_special_tokens=True
-        ).strip()
+    with open(out_file, "w", encoding="utf-8") as f:
+        for ex, out, prompt in zip(examples, outputs, prompts):
+            response = out.outputs[0].text.strip()
+            record = {
+                "instruction": ex["instruction"],
+                "response": response,
+                "prompt": prompt
+            }
+            f.write(json.dumps(record) + "\n")
 
-        fout.write(json.dumps({
-            "id":             ex["id"],
-            "prompt":         ex["prompt"],
-            "model_response": resp
-        }) + "\n")
+    throughput = len(prompts) / (end_time - start_time)
+    print(f"Throughput: {throughput:.2f} examples/second")
+    print(f"Results saved to: {out_file}")
 
-    fout.close()
-    elapsed   = time.time() - t0
-    throughput= len(examples) / elapsed
-    print(f"SST throughput: {throughput:.2f} examples/s")
-    print(f"Wrote {len(examples)} predictions to {out_path}")
-
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
