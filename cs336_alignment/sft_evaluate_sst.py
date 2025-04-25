@@ -1,4 +1,8 @@
 import os
+os.environ['VLLM_USE_V1'] = '0'
+
+import multiprocessing as mp
+mp.set_start_method("spawn", force=True)
 import json
 import time
 import sys
@@ -11,7 +15,7 @@ from tqdm import tqdm
 from tests import adapters  
 
 
-model_dir = "/content/models/qwen2.5-0.5B-sft"
+model_dir = "/content/sft_model_local"
 sst_path = "/content/data/sst/sst_prompts.jsonl"
 batch_size = 5
 max_tokens = 1024
@@ -40,7 +44,7 @@ def main():
     examples = load_sst_examples(sst_path)
     prompts = [format_instruction_prompt(ex) for ex in examples]
 
-    model = LLM(model=model_dir)
+    model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2)
     sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["###"])
 
     print(f"Evaluating {len(prompts)} SimpleSafetyTests examples...")
