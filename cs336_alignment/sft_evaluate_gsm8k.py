@@ -1,13 +1,18 @@
 import os
 import json
 import time
-import argparse
-import torch
-from typing import Any, Dict, List
+import random
 from vllm import LLM, SamplingParams
-from tests import adapters 
+from tests import adapters  
 
-def load_gsm8k_examples(filepath: str) -> List[Dict[str, Any]]:
+model_dir = "/content/models/qwen2.5-0.5B-sft"
+gsm8k_path = "/content/data/gsm8k/dev.jsonl"
+batch_size = 5
+max_tokens = 512
+out_file = "gsm8k_sft_outputs.jsonl"
+
+
+def load_gsm8k(filepath: str) -> List[Dict[str, Any]]:
     examples = []
     with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
@@ -20,72 +25,58 @@ def load_gsm8k_examples(filepath: str) -> List[Dict[str, Any]]:
             })
     return examples
 
-def format_prompt(example: Dict[str, Any]) -> str:
-    return f"{example['question']}\n\nAnswer:"
+
+def format_instruction_prompt(example):
+    return (
+        "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+        "### Instruction:\n"
+        f"{example['question']}\n\n"
+        "### Response:"
+    )
+
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-dir",    required=True,
-                        help="Path to fine-tuned Qwen2.5-0.5B model")
-    parser.add_argument("--gsm8k-path",   required=True,
-                        help="Path to the GSM8K JSONL file")
-    parser.add_argument("--batch-size",   type=int, default=5)
-    parser.add_argument("--max-tokens",   type=int, default=1024)
-    parser.add_argument("--out-file",     default="gsm8k_sft_results.json")
-    args = parser.parse_args()
+    examples = load_gsm8k(gsm8k_path)
+    prompts = [format_instruction_prompt(ex) for ex in examples]
+    labels = [ex["answer"].strip() for ex in examples]
 
-    examples = load_gsm8k_examples(args.gsm8k_path)
-    print(f"Loaded {len(examples)} examples for GSM8K SFT evaluation")
+    model = LLM(model=model_dir)
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["\n"])
 
-    prompts = [format_prompt(ex) for ex in examples]
-    sampling_params = SamplingParams(
-        temperature=0.0,
-        top_p=1.0,
-        max_tokens=args.max_tokens,
-        stop=["\n"],
-    )
-    llm = LLM(model=args.model_dir)
+    print(f"Evaluating {len(prompts)} GSM8K examples...")
+    start_time = time.time()
+    outputs = model.generate(prompts, sampling_params=sampling_params, batch_size=batch_size)
+    end_time = time.time()
 
-    t0 = time.time()
-    outputs = []
-    for i in range(0, len(prompts), args.batch_size):
-        batch = prompts[i : i + args.batch_size]
-        outputs.extend(llm.generate(batch, sampling_params))
-        torch.cuda.empty_cache()
-    elapsed = time.time() - t0
-
-    num_correct = 0
+    correct_count = 0
     results = []
-    for ex, prompt, out in zip(examples, prompts, outputs):
-        text = out.outputs[0].text
-        pred = adapters.run_parse_gsm8k_response(text)
-        corr = ex["answer"]
-        is_corr = (pred == corr)
-        if is_corr:
-            num_correct += 1
-        results.append({
-            "question":       ex["question"],
-            "prompt":         prompt,
-            "model_output":   text,
-            "predicted":      pred,
-            "correct_answer": corr,
-            "is_correct":     is_corr,
-        })
 
-    throughput = len(prompts) / elapsed
-    accuracy   = num_correct / len(prompts) * 100
-    print(f"Throughput: {throughput:.2f} examples/s")
-    print(f"Accuracy:   {accuracy:.2f}% ({num_correct}/{len(prompts)})")
+    with open(out_file, "w", encoding="utf-8") as f:
+        for ex, out, label, prompt in zip(examples, outputs, labels, prompts):
+            raw_response = out.outputs[0].text.strip()
+            predicted = raw_response.split()[0].strip().strip(".")  # crude match
 
-    with open(args.out_file, "w", encoding="utf-8") as fout:
-        json.dump({
-            "throughput":   throughput,
-            "accuracy":     accuracy,
-            "num_correct":  num_correct,
-            "total":        len(prompts),
-            "results":      results,
-        }, fout, indent=2)
-    print(f"Wrote detailed results to {args.out_file}")
+            is_correct = label.startswith(predicted)
+            correct_count += int(is_correct)
+
+            result = {
+                "question": ex["question"],
+                "correct": label,
+                "predicted": predicted,
+                "is_correct": is_correct,
+                "model_output": raw_response,
+                "prompt": prompt
+            }
+            results.append(result)
+            f.write(json.dumps(result) + "\n")
+
+    total = len(results)
+    accuracy = correct_count / total * 100
+    throughput = total / (end_time - start_time)
+
+    print(f"\Accuracy: {accuracy:.2f}% ({correct_count}/{total})")
+    print(f"Throughput: {throughput:.2f} examples/sec")
+    print(f"Results saved to: {out_file}")
 
 if __name__ == "__main__":
     main()
