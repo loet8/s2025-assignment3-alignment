@@ -53,7 +53,7 @@ def main():
     print(f"Evaluating {len(prompts)} GSM8K examples...")
     start_time = time.time()
     outputs = []
-    for i in tqdm(range(0, len(prompts), 1)):  # 1 prompt at a time
+    for i in tqdm(range(0, len(prompts), 1)):  
         sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
         outputs.extend(sub_outputs)
     end_time = time.time()
