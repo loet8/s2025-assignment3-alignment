@@ -50,65 +50,52 @@ def format_instruction_prompt(example):
     )
 
 def main():
-    files = [f for f in os.listdir(mmlu_dir) if f.endswith(".csv")]
+    llm = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2)
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["\n"])
+
     total_correct = 0
     total_examples = 0
-    all_start = time.time()
+    start_all = time.time()
 
-    for filename in files:
-        path_to_csv = os.path.join(mmlu_dir, filename)
-        examples = load_mmlu_csv(path_to_csv)
+    for fname in os.listdir(mmlu_dir):
+        if not fname.endswith(".csv"):
+            continue
+
+        path = os.path.join(mmlu_dir, fname)
+        examples = load_mmlu_csv(path)
         prompts = [format_instruction_prompt(ex) for ex in examples]
         labels = [ex["answer"] for ex in examples]
 
-        model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2, enforce_eager=True) 
-        sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["\n"])
-
-        print(f"\nEvaluating {len(prompts)} examples from {filename}")
-        start_time = time.time()
-
         outputs = []
-        for i in tqdm(range(0, len(prompts), 1)): 
-            sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
-            outputs.extend(sub_outputs)
+        for i in tqdm(range(len(prompts))):
+            out = llm.generate(prompts[i:i+1], sampling_params=sampling_params)
+            outputs.extend(out)
 
-        end_time = time.time()
-
-        correct_count = 0
-        results = []
-
-        out_file = f"mmlu_outputs_{filename.replace('.csv', '')}.jsonl"
-        with open(out_file, "w", encoding="utf-8") as f:
-            for ex, out, label, prompt in zip(examples, outputs, labels, prompts):
-                raw_response = out.outputs[0].text.strip()
-                prediction = next((ch for ch in raw_response if ch in "ABCD"), raw_response.split()[0] if raw_response else "")
-                is_correct = prediction == label
-                correct_count += int(is_correct)
-
+        correct = 0
+        out_path = f"mmlu_outputs_{fname.replace('.csv','.jsonl')}"
+        with open(out_path, "w", encoding="utf-8") as fout:
+            for ex, resp, lbl in zip(examples, outputs, labels):
+                raw = resp.outputs[0].text.strip()
+                pred = next((ch for ch in raw if ch in "ABCD"), raw.split()[0] if raw else "")
+                is_corr = (pred == lbl)
+                if is_corr:
+                    correct += 1
                 result = {
-                    "question": ex["question"],
-                    "options": ex["options"],
-                    "correct": label,
-                    "predicted": prediction,
-                    "is_correct": is_correct,
-                    "model_output": raw_response,
-                    "prompt": prompt
+                    "question":     ex["question"],
+                    "options":      ex["options"],
+                    "correct":      lbl,
+                    "predicted":    pred,
+                    "is_correct":   is_corr,
+                    "model_output": raw,
                 }
-                results.append(result)
-                f.write(json.dumps(result) + "\n")
+                fout.write(json.dumps(result) + "\n")
 
-        total_correct += correct_count
-        total_examples += len(results)
-        
+        total_correct += correct
+        total_examples += len(examples)
 
-    overall_time = time.time() - all_start
-    overall_accuracy = total_correct / total_examples * 100
-    overall_throughput = total_examples / overall_time
-    print(f"Overall Accuracy: {overall_accuracy:.2f}% ({total_correct}/{total_examples})")
-    print(f"Overall Throughput: {overall_throughput:.2f} examples/sec")
-
-
-
+    overall_time = time.time() - start_all
+    print(f"Overall Accuracy: {total_correct}/{total_examples} = {total_correct/total_examples*100:.2f}%")
+    print(f"Overall Throughput: {total_examples/overall_time:.2f} ex/s")
 
 if __name__ == "__main__":
     main()
