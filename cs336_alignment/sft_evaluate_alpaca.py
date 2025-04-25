@@ -1,4 +1,10 @@
 import os
+os.environ['VLLM_USE_V1'] = '0'
+
+
+import multiprocessing as mp
+mp.set_start_method("spawn", force=True)
+
 import json
 import time
 import sys
@@ -40,7 +46,7 @@ def main():
     examples = load_alpaca_eval_examples(alpaca_eval_path)
     prompts = [format_instruction_prompt(ex) for ex in examples]
 
-    model = LLM(model=model_dir)
+    model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2)
     sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["###"])
 
     print(f"Evaluating {len(prompts)} AlpacaEval examples...")
