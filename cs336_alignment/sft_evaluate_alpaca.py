@@ -67,6 +67,7 @@ def main():
             "instruction": ex["instruction"],
             "input": ex.get("input", ""),  
             "output": response, 
+            "generator": "my_sft_model",  # Add this line
             "prompt": prompt
         })
 
