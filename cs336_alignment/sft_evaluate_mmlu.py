@@ -56,7 +56,7 @@ def main():
         prompts = [format_instruction_prompt(ex) for ex in examples]
         labels = [ex["answer"] for ex in examples]
 
-        model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=64, enforce_eager=True) 
+        model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2, enforce_eager=True) 
         sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["\n"])
 
         print(f"\nEvaluating {len(prompts)} examples from {filename}")
