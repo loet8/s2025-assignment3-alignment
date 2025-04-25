@@ -14,7 +14,7 @@ sys.path.insert(0, repo_root)
 
 from vllm import LLM, SamplingParams
 from tqdm import tqdm
-from tests import adapters  # required if using custom tokenizer logic
+from tests import adapters 
 
 
 model_dir = "/content/sft_model_local"
@@ -67,7 +67,7 @@ def main():
             "instruction": ex["instruction"],
             "input": ex.get("input", ""),  
             "output": response, 
-            "generator": "my_sft_model",  # Add this line
+            "generator": "my_sft_model", 
             "prompt": prompt
         })
 
