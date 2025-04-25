@@ -18,7 +18,6 @@ from tests import adapters
 
 model_dir = "/content/sft_model_local"
 gsm8k_path = "/content/s2025-assignment3-alignment/data/gsm8k/test.jsonl"
-batch_size = 5
 max_tokens = 512
 out_file = "gsm8k_sft_outputs.jsonl"
 
@@ -45,39 +44,47 @@ def format_instruction_prompt(example):
 
 def main():
     examples = load_gsm8k(gsm8k_path)
-    prompts = [format_instruction_prompt(ex) for ex in examples]
-    labels = [ex["answer"].strip() for ex in examples]
+    prompts  = [format_instruction_prompt(ex) for ex in examples]
+    labels   = [ex["answer"].strip() for ex in examples]
 
     model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2)
-    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["\n"])
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=max_tokens,
+        stop=["\n"],
+    )
 
     outputs = []
     for i in tqdm(range(len(prompts))):
-        sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
-        outputs.extend(sub_outputs)
+        sub = model.generate(prompts[i:i+1], sampling_params=sampling_params)
+        outputs.extend(sub)
 
     correct_count = 0
-    results = []
 
     with open(out_file, "w", encoding="utf-8") as f:
         for ex, out, label in zip(examples, outputs, labels):
             raw_response = out.outputs[0].text.strip()
-            parts = raw_response.split()
-            predicted = parts[0].strip().strip(".") if parts else ""
+            tokens = raw_response.split()
+            if tokens:
+                predicted = tokens[0].strip().strip(".")
+            else:
+                predicted = ""
             is_correct = label.startswith(predicted)
             correct_count += int(is_correct)
             result = {
-                "question": ex["question"],
-                "correct":  label,
-                "predicted": predicted,
-                "is_correct": is_correct,
+                "question":     ex["question"],
+                "correct":      label,
+                "predicted":    predicted,
+                "is_correct":   is_correct,
                 "model_output": raw_response
             }
             f.write(json.dumps(result) + "\n")
 
-    total = len(examples)
-    accuracy = correct_count / total * 100
-    throughput = total / (time.time() - start_time)
+    total     = len(examples)
+    accuracy  = correct_count / total * 100
+    duration  = time.time() - start_time
+    throughput = total / duration
 
     print(f"Accuracy: {accuracy:.2f}% ({correct_count}/{total})")
     print(f"Throughput: {throughput:.2f} examples/sec")
