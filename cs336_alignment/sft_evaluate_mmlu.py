@@ -1,4 +1,5 @@
 import os
+os.environ['VLLM_USE_V1'] = '0'
 import sys
 import csv
 import json
