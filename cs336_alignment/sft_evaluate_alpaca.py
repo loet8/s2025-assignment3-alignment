@@ -30,8 +30,6 @@ def load_alpaca_eval_examples(filepath: str):
         for line in f:
             if line.strip():
                 data = json.loads(line.strip())
-                if "instruction_id" not in data:
-                    raise ValueError("Missing 'instruction_id' in dataset")
                 examples.append(data)
     return examples
 
@@ -69,7 +67,6 @@ def main():
             "instruction": ex["instruction"],
             "input": ex.get("input", ""),  
             "output": response, 
-            "instruction_id": ex["instruction_id"],  
             "prompt": prompt
         })
 
