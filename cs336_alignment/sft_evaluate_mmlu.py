@@ -39,7 +39,7 @@ def format_instruction_prompt(example):
         "### Response:"
     )
 
-def evaluate():
+def main():
     files = [f for f in os.listdir(mmlu_dir) if f.endswith(".csv")]
     total_correct = 0
     total_examples = 0
@@ -96,4 +96,4 @@ def evaluate():
 
 
 if __name__ == "__main__":
-    evaluate()
+    main()
