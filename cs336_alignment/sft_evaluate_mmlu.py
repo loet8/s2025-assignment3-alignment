@@ -9,16 +9,17 @@ repo_root = os.path.abspath(os.path.join(__file__, "..", ".."))
 sys.path.insert(0, repo_root)
 
 from vllm import LLM, SamplingParams
+from tqdm import tqdm
 from tests import adapters  
 
-model_dir = "/content/models/qwen2.5-0.5B-sft"   
-mmlu_dir = "/content/data/mmlu/dev"              
+model_dir = "/content/drive/MyDrive/Training files Assignment 3/Model Outputs/sft model"   
+mmlu_dir = "/content/s2025-assignment3-alignment/data/mmlu/dev"              
 batch_size = 5
 max_tokens = 512
 out_file = "mmlu_sft_outputs.jsonl"
 
 
-def load_mmlu_csv(csv_path: str, subject: str):
+def load_mmlu_csv(csv_path: str):
     examples = []
     with open(csv_path, mode="r", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -26,7 +27,6 @@ def load_mmlu_csv(csv_path: str, subject: str):
             if not row or len(row) < 6:
                 continue
             example = {
-                "subject": subject,
                 "question": row[0],
                 "options": [row[1], row[2], row[3], row[4]],
                 "answer": row[-1].strip().upper()
@@ -56,12 +56,17 @@ def main():
         prompts = [format_instruction_prompt(ex) for ex in examples]
         labels = [ex["answer"] for ex in examples]
 
-        model = LLM(model=model_dir)
+        model = LLM(model=model_dir, enforce_eager=True)
         sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["\n"])
 
         print(f"\nEvaluating {len(prompts)} examples from {filename}")
         start_time = time.time()
-        outputs = model.generate(prompts, sampling_params=sampling_params, batch_size=batch_size)
+
+        outputs = []
+        for i in tqdm(range(0, len(prompts), 1)):  # 1 prompt at a time
+            sub_outputs = model.generate(prompts[i:i+1], sampling_params=sampling_params)
+            outputs.extend(sub_outputs)
+
         end_time = time.time()
 
         correct_count = 0
