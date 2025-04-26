@@ -23,8 +23,7 @@ Here are the outputs of the models:
 
 Now please rank the models by the quality of their answers, so that the model with rank 1 has the best output. Then return a list of the model names and ranks, i.e., produce the following output:
 [
-    {'model': <model-name>, 'rank': <model-rank>},
-    {'model': <model-name>, 'rank': <model-rank>}
+    {"model": "model_1", "rank": 1},
+    {"model": "model_2", "rank": 2}
 ]
-
 Your response must be a valid Python dictionary and should contain nothing else because we will directly execute it in Python. Please provide the ranking that the majority of humans would give.<|eot_id|><|start_header_id|>assistant<|end_header_id|>
