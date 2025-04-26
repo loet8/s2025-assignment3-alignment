@@ -23,7 +23,7 @@ def main():
     model_path = "../Qwen/Qwen2.5-0.5B" 
     generator_name = "qwen2.5-0.5b"
 
-    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=2048, stop=["\n"])
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=2048)
     
     llm = LLM(model=model_path)
 
