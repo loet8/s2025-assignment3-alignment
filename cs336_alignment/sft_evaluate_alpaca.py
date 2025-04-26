@@ -20,7 +20,7 @@ from tests import adapters
 model_dir = "/content/sft_model_local"
 alpaca_eval_path = "/content/s2025-assignment3-alignment/data/alpaca_eval/alpaca_eval.jsonl"
 batch_size = 5
-max_tokens = 1024
+max_tokens = 4096
 out_file = "alpaca_eval_sft_outputs.json"
 
 
@@ -49,7 +49,7 @@ def main():
     prompts = [format_instruction_prompt(ex) for ex in examples]
 
     model = LLM(model=model_dir, gpu_memory_utilization=0.7, max_num_seqs=2)
-    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens, stop=["###"])
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=max_tokens)
 
     print(f"Evaluating {len(prompts)} AlpacaEval examples...")
     start_time = time.time()
