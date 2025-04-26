@@ -221,4 +221,45 @@ def compute_per_instance_dpo_loss(
     Returns:
         torch.Tensor with the DPO loss for this example.
     """
+    def format_text(response):
+        return (
+            "Below is an instruction that describes a task. "
+            "Write a response that appropriately completes the request.\n\n"
+            f"### Instruction:\n{prompt}\n\n"
+            f"### Response:\n{response}"
+        )
+
+    def tokenize(text):
+        encoded = tokenizer(
+            text,
+            return_tensors="pt",
+            padding=False,
+            truncation=False,
+            add_special_tokens=True,
+        )
+        
+        return encoded.input_ids.to(lm.device), encoded.attention_mask.to(lm.device)
+
+    chosen_input_ids, chosen_attention_mask = tokenize(format_text(response_chosen))
+    rejected_input_ids, rejected_attention_mask = tokenize(format_text(response_rejected))
+
+    def get_logps(model, input_ids, attention_mask):
+        labels = input_ids.clone()
+
+        with torch.set_grad_enabled(model is lm):
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+
+        return -outputs.loss * input_ids.shape[1]  
+
+    pi_chosen = get_logps(lm, chosen_input_ids, chosen_attention_mask)
+    pi_rejected = get_logps(lm, rejected_input_ids, rejected_attention_mask)
+
+    with torch.no_grad():
+        ref_chosen = get_logps(lm_ref, chosen_input_ids, chosen_attention_mask)
+        ref_rejected = get_logps(lm_ref, rejected_input_ids, rejected_attention_mask)
+
+    log_ratio = (pi_chosen - ref_chosen) - (pi_rejected - ref_rejected)
+    loss = -torch.nn.functional.logsigmoid(beta * log_ratio)
+
+    return loss
     raise NotImplementedError
